@@ -1,4 +1,4 @@
-function BipolarMemristorSweep(smu, set_list, reset_list, stime)
+function BipolarMemristorSweep(smu, set_list, reset_list, stime, set_compliance, reset_compliance)
      -- This function performs a bipolar memristor sweep using the Keithley 2600A SMU.
      -- smu: The Keithley 2600A SMU instrument object.
      -- set_list: A list of current levels for the SET operation (positive).
@@ -23,12 +23,12 @@ function BipolarMemristorSweep(smu, set_list, reset_list, stime)
 
         -- Perform the SET sweep (positive current levels)
     
-    smu.source.limiti = 1e-5 --set current to 10uA to prevent device damage --SET compliance
+    smu.source.limiti = set_compliance 
     RunSweepPhase(smu,set_list,stime)
 
 
     -- Perform the RESET sweep (negative current levels)
-    smu.source.limiti = 100e-3 --set current to 100mA to ensure RESET operation --RESET compliance
+    smu.source.limiti = reset_compliance 
     RunSweepPhase(smu,reset_list,stime)
 
     -- After the sweep, turn off the output and display results
@@ -59,7 +59,7 @@ function RunSweepPhase(smu, vlist,stime)
 
     --configure the delay
 
-    if (stime>0)
+    if (stime>0) then
         trigger.timer[1].reset()  -- Reset timer 1
         trigger.timer[1].delay = stime  -- Set the delay for each point in the sweep
         smu.trigger.measure.stimulus = trigger.timer[1].EVENT_ID
