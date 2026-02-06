@@ -6,7 +6,8 @@ from measurement_control.datasets import Dataset
 import pandas as pd
 from enum import Enum
 from measurement_control.instruments.keithley_2600 import SMU, Range , Mode , Quantity
-
+#import errors from measurement control
+#import keithley from measurment control
 class Memristor:
     
     def __init__(self, keithley: Keithley2600):
@@ -34,8 +35,22 @@ class Memristor:
         """
         
         k=self.k
+        MAX_LIST_SWEEP_POINTS = 69901
         
         num_points = len(set_list) + len(reset_list)
+
+
+        if num_points == 0:
+            raise errors.InvalidCommandParameterException(
+                "SET and RESET sweep lists are empty."
+            )
+
+        if num_points > MAX_LIST_SWEEP_POINTS:
+            raise errors.InvalidCommandParameterException(
+                f"Max number of sweep points ({MAX_LIST_SWEEP_POINTS}) exceeded: {num_points}"
+            )
+
+        
         
         # 1. Read external TSP logic
         with open('memristor_logic.tsp', 'r',encoding='ascii') as f:
@@ -61,10 +76,15 @@ class Memristor:
         
         trigger_time = datetime.utcnow().isoformat()
         
+        set_points = len(set_list)
+        reset_points = len(reset_list)
+
+        
         # Call the main function with your parameters
         k.send(
             f"BipolarMemristorSweep({smu.value}, sl_set, sl_reset, "
-            f"{settling_time}, {set_compliance}, {reset_compliance})"
+            f"{settling_time}, {set_compliance}, {reset_compliance}, "
+            f"{set_points}, {reset_points})"
         )
         
         k.send("sl_set = nil")
@@ -83,10 +103,18 @@ class Memristor:
             k.query(f'{smu.value}.measure.rangei')
         )
         
+        actual_points = int(k.query(f'print({smu.value}.nvbuffer1.n)'))
+
+        
+        
         # 5. Retrieve Data from Buffer
-        raw_i = [float(value) for value in k.send_recv(f'printbuffer(1, {num_points}, {smu.value}.nvbuffer1.readings)').split(', ')]
-        raw_v = [float(value) for value in k.send_recv(f"printbuffer(1, {num_points}, {smu.value}.nvbuffer1.sourcevalues)").split(', ')]
-        raw_t = [float(value) for value in k.send_recv(f"printbuffer(1, {num_points}, {smu.value}.nvbuffer1.timestamps)").split(', ')]
+        raw_i = [float(value) for value in k.send_recv(f'printbuffer(1, {actual_points}, {smu.value}.nvbuffer1.readings)').split(', ')]
+        raw_v = [float(value) for value in k.send_recv(f"printbuffer(1, {actual_points}, {smu.value}.nvbuffer1.sourcevalues)").split(', ')]
+        raw_t = [float(value) for value in k.send_recv(f"printbuffer(1, {actual_points}, {smu.value}.nvbuffer1.timestamps)").split(', ')]
+        #raw_i = [float(x) for x in k.send_recv(f'printbuffer(1, {actual_points}, {smu.value}.nvbuffer1.readings)').replace(' ', '').split(',')]
+        #raw_v = [float(x) for x in k.send_recv(f"printbuffer(1, {actual_points}, {smu.value}.nvbuffer1.sourcevalues)").replace(' ', '').split(',')]
+        #raw_t = [float(x) for x in k.send_recv(f"printbuffer(1, {actual_points}, {smu.value}.nvbuffer1.timestamps)").replace(' ', '').split(',')]
+
         k.clear_buffer(1, smu)
         k.check_error_queue()
         
