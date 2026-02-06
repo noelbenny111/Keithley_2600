@@ -22,11 +22,11 @@ with Keithley2600(GPIBCommunicator(26, visa_library='@py')) as k2600:
     ds = mem.bipolar_memristor_sweep(
         set_list=create_sweep_list((5,), 0.1),
         reset_list=create_sweep_list((-5,), 0.1),
-        settling_time=0.01,
+        settling_time=0.001,
         set_compliance=0.0001,
         reset_compliance=0.01,
         voltage_range=5,
-        current_range=Range.AUTO
+        current_range=1
     )
 
     # The connection is active here
