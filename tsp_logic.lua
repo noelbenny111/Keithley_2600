@@ -1,41 +1,3 @@
-function BipolarMemristorSweep(smu, set_list, reset_list, stime, set_compliance, reset_compliance)
-     -- This function performs a bipolar memristor sweep using the Keithley 2600A SMU.
-     -- smu: The Keithley 2600A SMU instrument object.
-     -- set_list: A list of current levels for the SET operation (positive).
-     -- reset_list: A list of current levels for the RESET operation (negative).
-     -- stime: The time to hold each current level in seconds.
-    -- Configure the SMU for a bipolar memristor sweep.
-     display.clear()  -- Clear the display
-
-     --update dispaly with test information
-     display.settext("SET / RESET Sweep")  -- Line 1 (20 characters max)
-
-     --configure source and measure settings
-     smu.source.output = smu.OUTPUT_OFF  -- Ensure output is off before configuring
-     smu.source.func = smu.OUTPUT_DCVOLTS  -- Set the source function to DC voltage
-     smu.source.levelv = 0  -- Start with 0V
-
-     --setup a buffer to store the result in and start testing
-     smu.nvbuffer1.clear()  -- Clear buffer 1 for voltage measurements
-     smu.nvbuffer1.appendmode = 1  -- Set buffer 1 to append mode
-     smu.nvbuffer1.collecttimestamps = 1  -- Collect timestamps for each measurement
-     smu.nvbuffer1.collectsourcevalues = 1  -- Collect source values for each measurement
-
-        -- Perform the SET sweep (positive current levels)
-    
-    smu.source.limiti = set_compliance 
-    RunSweepPhase(smu,set_list,stime)
-
-
-    -- Perform the RESET sweep (negative current levels)
-    smu.source.limiti = reset_compliance 
-    RunSweepPhase(smu,reset_list,stime)
-
-    -- After the sweep, turn off the output and display results
-    smu.source.output = smu.OUTPUT_OFF  -- Turn off the output after the sweep
-    display.settext("Sweep Complete")  -- Update display to indicate completion
-end
-
 function RunSweepPhase(smu, vlist,stime)
     --Always reset trigger model
     smu.trigger.arm.stimulus =0 -- Set the trigger model to immediate (0) for continuous sweeping
@@ -72,8 +34,51 @@ function RunSweepPhase(smu, vlist,stime)
     smu.source.output =smu.OUTPUT_ON
     smu.trigger.initiate()  -- Start the sweep
     waitcomplete()
-    display.clear()
 end
+
+function BipolarMemristorSweep(smu, set_list, reset_list, stime, set_compliance, reset_compliance)
+     -- This function performs a bipolar memristor sweep using the Keithley 2600A SMU.
+     -- smu: The Keithley 2600A SMU instrument object.
+     -- set_list: A list of current levels for the SET operation (positive).
+     -- reset_list: A list of current levels for the RESET operation (negative).
+     -- stime: The time to hold each current level in seconds.
+    -- Configure the SMU for a bipolar memristor sweep.
+     display.clear()  -- Clear the display
+
+     --update dispaly with test information
+     display.settext("SET / RESET Sweep")  -- Line 1 (20 characters max)
+
+     --configure source and measure settings
+     smu.source.output = smu.OUTPUT_OFF  -- Ensure output is off before configuring
+     smu.source.func = smu.OUTPUT_DCVOLTS  -- Set the source function to DC voltage
+     smu.source.levelv = 0  -- Start with 0V
+
+     --setup a buffer to store the result in and start testing
+     smu.nvbuffer1.clear()  -- Clear buffer 1 for voltage measurements
+     smu.nvbuffer1.appendmode = 1  -- Set buffer 1 to append mode
+     smu.nvbuffer1.collecttimestamps = 1  -- Collect timestamps for each measurement
+     smu.nvbuffer1.collectsourcevalues = 1  -- Collect source values for each measurement
+
+        -- Perform the SET sweep (positive current levels)
+    
+    smu.source.limiti = set_compliance 
+    RunSweepPhase(smu,set_list,stime)
+    display.clear()
+    display.settext("SET Sweep Complete")  -- Update display to indicate SET sweep completion
+    
+
+    -- Perform the RESET sweep (negative current levels)
+    smu.source.limiti = reset_compliance 
+    RunSweepPhase(smu,reset_list,stime)
+    display.clear()
+    display.settext("RESET Sweep Complete")  -- Update display to indicate RESET sweep completion
+
+    -- After the sweep, turn off the output and display results
+    smu.source.output = smu.OUTPUT_OFF  -- Turn off the output after the sweep
+    display.settext("Sweep Complete")  -- Update display to indicate completion
+end
+
+
 
 
 
