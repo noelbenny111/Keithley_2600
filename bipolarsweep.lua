@@ -1,7 +1,4 @@
-function BipolarSweep(smu, set_list, reset_list, stime, set_comp, reset_comp, cycles)
-    local set_pts = table.getn(set_list)
-    local reset_pts = table.getn(reset_list)
-
+function BipolarSweep(smu, set_list, reset_list, stime, set_comp, reset_comp, set_pts, reset_pts, cycles)
     display.clear()
     display.settext("Bipolar Sweep")
 
