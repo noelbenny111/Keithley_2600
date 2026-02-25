@@ -1,0 +1,66 @@
+import matplotlib.pyplot as plt
+import numpy as np
+from measurement_control.communicators import TCPIPCommunicator, USBCommunicator
+from measurement_control.instruments.keithley_2600a import Keithley2600A, SMU
+from measurement_control.instruments.thorlabs_dc2200 import DC2200
+from measurement_control.utils import create_sweep_list
+from measurement_control.plots import two_scale_plot,plot,PlotScale,PlotType
+from OE_1 import OptoMemristor
+
+set_v = create_sweep_list([2], 0.01)
+reset_v = create_sweep_list([-2], 0.01)
+led_list = np.linspace(0.1,0.5, 5)
+
+
+with DC2200(USBCommunicator()) as dc, \
+     Keithley2600A(TCPIPCommunicator('192.168.0.2', 5025)) as k:
+
+    opto = OptoMemristor(k, dc)
+    dataset = opto.OESweep(
+        set_list=set_v,
+        reset_list=reset_v,
+        led_currents=led_list,
+        settling_time=0.001,
+        compliance=1e-3,
+        cycles=1,
+        measure_range=3e-3,
+        source_range=5.0,
+        nplc=0.01,
+        smu=SMU.SMUA,
+        measurement_title="LED intensity sweep"
+    )
+
+    # Plot results per LED current
+    df = dataset.data
+    # 1. Prepare IV Plots (Filtering out the 0.2V reads)
+    sweep_df = df[df["phase"].isin(["SET", "RESET"])]
+    iv_x, iv_y, iv_labels = [], [], []
+    
+    for led, group in sweep_df.groupby("led_current_A"):
+        iv_x.append(group["v"].tolist())
+        iv_y.append(group["i"].abs().tolist())
+    
+    plot(
+        x_values=iv_x, y_values=iv_y,
+        title="Filtered Bipolar IV Characteristics",
+        x_label="Voltage (V)", y_label="Current (A)",
+        y_scale=PlotScale.LOG,
+        plot_type=PlotType.LINE
+    )
+    
+    # 2. Prepare Resistance Tracking (Only 0.2V reads)
+    read_df = df[df["phase"].str.contains("READ")].copy()
+    read_df["r"] = 0.2 / read_df["i"].abs()
+    
+    two_scale_plot(
+        x_values=np.arange(len(read_df)), 
+        y1_values=read_df["i"].abs(),
+        y2_values=read_df["r"],
+        title="HRS/LRS Resistance Tracking @ 0.2V",
+        x_label="Read Measurement #",
+        y1_label="Read Current [A]",
+        y2_label="Resistance [Ω]",
+        y1_scale=PlotScale.LOG, y2_scale=PlotScale.LOG,
+        plot_type1=PlotType.LINE, plot_type2=PlotType.SCATTER,
+        color1='C0', color2='C1'
+    )
