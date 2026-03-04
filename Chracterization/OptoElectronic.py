@@ -1,67 +1,92 @@
 import time
-import typing
+from typing import Optional, Union, Sequence, Dict, Any 
 import warnings
 from datetime import datetime
+from matplotlib.pyplot import plot
 import pandas as pd
 import numpy as np
+import typing
 
 from measurement_control.instruments.keithley_2600a import SMU, Range, Mode, Quantity, Autozero, Keithley2600A, Keithley2600AModel
 from measurement_control.instruments.thorlabs_dc2200 import DC2200
 from measurement_control.datasets import Dataset
 from measurement_control import errors, config
-from measurement_control.files import File
-from measurment_control import __version__
-
+from measurement_control.files import File,TextFile
+from measurement_control import __version__
+from measurement_control.utils import create_sweep_list
+from measurement_control.plots import plot
 
 CUSTOM_SCRIPT_VERSION = __version__
 CUSTOM_SCRIPT = "all_functions.lua"
-class OptoMemristor:
-    def __init__(self, keithley: Keithley2600A, dc_driver: DC2200, force_code_reload: bool = False):
+class Characterization:
+    def __init__(self, keithley: Keithley2600A, dc_driver: Optional[DC2200] = None, force_code_reload: bool = False):
+        
+        """
+        Initialize the Characterization class.
+
+        :param keithley: A connected Keithley2600A instance.
+        :param dc_driver: Optional DC2200 instance for LED control. If not provided,
+                          methods that require the LED will raise an error.
+        :param force_code_reload: Whether to force reload of the Lua script.
+        """
         self.k = keithley
         self.dc = dc_driver
         if force_code_reload or self.k.query('GetMeasurementControlScriptID == nil') == 'true' or self.k.query('GetMeasurementControlScriptID()') != CUSTOM_SCRIPT_VERSION:
-            inp_file = all_functions.lua
-            with inp_file.open("rt") as f:
+            with open(CUSTOM_SCRIPT, "r") as f:
                 custom_script_code = f.read()
-            if type(self.communicator) is USBCommunicator:
-                # USB communication does not transfer the complete file in one send command
-                # Sending line by line seems to be fast enough
-                self.send("""loadandrunscript MeasurementControl
-                    function GetMeasurementControlScriptID()
-                        return \"""" + CUSTOM_SCRIPT_VERSION + """\"
-                    end""")
-                for line in custom_script_code.split('\n'):
-                    self.send(line)
-                self.send("endscript")
-            else:
-                self.send("""loadandrunscript MeasurementControl
-                    function GetMeasurementControlScriptID()
-                        return \"""" + CUSTOM_SCRIPT_VERSION + """\"
-                    end
-                    """ + custom_script_code + """
-                    endscript
-                    """)
-            self.check_error_queue(force=True)
-
+            self.k.send("""loadandrunscript MeasurementControl
+                function GetMeasurementControlScriptID()
+                    return \"""" + CUSTOM_SCRIPT_VERSION + """\"
+                end
+                """ + custom_script_code + """
+                endscript
+                """)
+            self.k.check_error_queue(force=True)
+    # ----------------------------------------------------------------------
+    # Utilities
+    # ----------------------------------------------------------------------
+    def _check_dc(self):
+        """Raise an error if no DC2200 is connected."""
+        if self.dc is None:
+            raise RuntimeError("This measurement requires a DC2200 driver, but none was provided.")            
+         
+    def get_buffer_data(self, buf_num, count, smu: SMU):
+        """
+        Utility function to retrieve data from the Keithley's buffer after a measurement.
+        :param buf_num: Buffer number to read from (1-4).
+        :param count: Number of points to read from the buffer.
+        :param smu: Which SMU's buffer to read (SMUA or SMUB).
+        :return: Tuple of (readings, timestamps, source_values) as lists of floats.
+        """
+        readings   = [float(v) for v in self.k.send_recv(f"printbuffer(1, {count}, {smu.value}.nvbuffer{buf_num}.readings)").split(", ")]
+        timestamps = [float(v) for v in self.k.send_recv(f"printbuffer(1, {count}, {smu.value}.nvbuffer{buf_num}.timestamps)").split(", ")]
+        sourcevals = [float(v) for v in self.k.send_recv(f"printbuffer(1, {count}, {smu.value}.nvbuffer{buf_num}.sourcevalues)").split(", ")]
+        
+        return readings, timestamps, sourcevals
+       
+    # ----------------------------------------------------------------------
+    # Photodiode methods (require DC2200)
+    # ----------------------------------------------------------------------
+    
     def IV_vs_Light_Cycled_cc(
         self,
-        v_list: typing.Sequence[float],
-        led_brightness_level: typing.Sequence[float],
+        v_list: Sequence[float],
+        led_brightness_level: Sequence[float],
         settling_time: float,
         compliance: float,
         cycles: int,
-        measure_range: typing.Union[float, Range],
-        source_range: typing.Optional[typing.Union[float, Range]] = None,
+        measure_range: Union[float, Range],
+        source_range: Optional[Union[float, Range]] = None,
         max_brightness_limit: float = 0.7,
         nplc: float = 1.0,
         smu: SMU = SMU.SMUA,
         high_voltage_mode: bool = False,
         autozero: Autozero = Autozero.OFF,
         measurement_title: str = "IV vs Light (Cycled)",
-        file: typing.Optional[File] = None,
-        sample: typing.Optional[typing.Union[str, int, typing.Dict[str, typing.Any]]] = config.sample,
-        operator: typing.Optional[typing.Union[str, int, typing.Dict[str, typing.Any]]] = config.operator,
-        custom_metadata: typing.Optional[typing.Dict] = None
+        file: Optional[File] = None,
+        sample: Optional[Union[str, int, Dict[str, Any]]] = config.sample,
+        operator: Optional[Union[str, int, Dict[str, Any]]] = config.operator,
+        custom_metadata: Optional[Dict] = None
     ) -> Dataset:
         """
         Perform a photodiode IV sweep at different LED brightness levels, repeated for a specified number of cycles.
@@ -92,7 +117,7 @@ class OptoMemristor:
             settling time of 0.5s, current compliance of 100mA, repeated for 3
             cycles, and saves the results to 'list_sweep.txt':
             
-            dataset = opto_memristor.IV_vs_Light_Cycled_cc(
+            dataset = characterization.IV_vs_Light_Cycled_cc(
                 v_list=create_sweep_list(-2, 2, 0.01),  # Sweep from -2V to 2V in 0.01V steps
                 led_brightness_level=[0.01, 0.05, 0.1],  # Test at 3 different LED currents
                 settling_time=0.5,  # Wait 0.5 seconds after setting voltage before measuring
@@ -106,6 +131,7 @@ class OptoMemristor:
             )             
                 
         """
+        self._check_dc()
         MAX_LIST_SWEEP_POINTS = 69901
 
         if cycles < 1:
@@ -128,11 +154,20 @@ class OptoMemristor:
             source_range = max_v_list
         elif not isinstance(source_range, Range) and source_range < max_v_list:
             raise errors.InvalidCommandParameterException(f'Value {max_v_list} to big for source range {source_range}')
-
+        
+        
+        self.dc.switch_off()   # Ensure LED is off before starting
         self.dc.set_user_current_limit(max_brightness_limit)
         all_dataframes = []
+        trigger_time = datetime.utcnow().isoformat()
+        self.k.set_compliance(compliance, Quantity.I, smu)
+        self.k.set_nplc(nplc, smu)
+        self.k.set_autozero(autozero, smu)
+        self.k.set_range(source_range, Mode.SOURCE, Quantity.V, smu)
+        self.k.set_range(measure_range, Mode.MEASURE, Quantity.I, smu)
         for c in range(1, cycles+1):
              print(f"--- Starting cycle {c} of {cycles} ---")
+             self.k.clear_error_queue()
              for led_i in led_brightness_level:
                 print(f"Testing LED current: {led_i} A")
                 # 1. Update point calculation to include the 2 READ pulses
@@ -145,12 +180,7 @@ class OptoMemristor:
                 time.sleep(0.1)
 
                 # Keithley setup (repeated for each LED current to ensure clean state)
-                self.k.clear_error_queue()
-                self.k.set_compliance(compliance, Quantity.I, smu)
-                self.k.set_nplc(nplc, smu)
-                self.k.set_autozero(autozero, smu)
-                self.k.set_range(source_range, Mode.SOURCE, Quantity.V, smu)
-                self.k.set_range(measure_range, Mode.MEASURE, Quantity.I, smu)
+                
 
                 # Load script and send lists
                 self.k.send("loadandrunscript")
@@ -158,9 +188,6 @@ class OptoMemristor:
                 for cmd in self.k._split_table_definition_command(
                     f"local v_list = {self.k.serialize_sequence(v_list)}"):
                     self.k.send(cmd)
-
-                trigger_time = datetime.utcnow().isoformat()
-
                 # Call the Lua function CustomSweep (does not toggle digio bit)
                 self.k.send(
                     f"CustomSweep({smu.value}, "
@@ -210,7 +237,7 @@ class OptoMemristor:
                         'measure_range': actual_measure_range,
                         'configured_source_range': source_range,
                         'configured_measure_range': measure_range,
-                        "led_brightness_levels": list(led_brightness_level),
+                        "led_brightness_level": list(led_brightness_level),
                         "smu": smu.value
                         }
                     }
@@ -224,13 +251,13 @@ class OptoMemristor:
     
     def IV_vs_Light_Cycled_ttl(
         self,
-        v_list: typing.Sequence[float],
-        led_current_list: typing.Sequence[float],
+        v_list: Sequence[float],
+        led_current_list: Sequence[float],
         settling_time: float,
         compliance: float,
         cycles: int,
-        measure_range: typing.Union[float, Range],
-        source_range: typing.Optional[typing.Union[float, Range]] = None,
+        measure_range: Union[float, Range],
+        source_range: Optional[Union[float, Range]] = None,
         nplc: float = 1.0,
         digital_io_bit: int = 1,
         led_current_limit: float = 0.7,
@@ -238,10 +265,10 @@ class OptoMemristor:
         high_voltage_mode: bool = False,
         autozero: Autozero = Autozero.OFF,
         measurement_title: str = "IV vs Light (Cycled)",
-        file: typing.Optional[File] = None,
-        sample: typing.Optional[typing.Union[str, int, typing.Dict[str, typing.Any]]] = config.sample,
-        operator: typing.Optional[typing.Union[str, int, typing.Dict[str, typing.Any]]] = config.operator,
-        custom_metadata: typing.Optional[typing.Dict] = None
+        file: Optional[File] = None,
+        sample: Optional[Union[str, int, Dict[str, Any]]] = config.sample,
+        operator: Optional[Union[str, int, Dict[str, Any]]] = config.operator,
+        custom_metadata: Optional[Dict] = None
     ) -> Dataset:
         """
         Perform a photodiode IV sweep at different LED current levels, repeated for a specified number of cycles.
@@ -273,7 +300,7 @@ class OptoMemristor:
             settling time of 0.5s, current compliance of 100mA, repeated for 3
             cycles, and saves the results to 'list_sweep.txt':
             
-            dataset = opto_memristor.IV_vs_Light_Cycled_cc(
+            dataset = characterization.IV_vs_Light_Cycled_cc(
                 v_list=create_sweep_list(-2, 2, 0.01),  # Sweep from -2V to 2V in 0.01V steps
                 led_current_list=[0.01, 0.05, 0.1],  # Test at 3 different LED currents
                 settling_time=0.5,  # Wait 0.5 seconds after setting voltage before measuring
@@ -287,6 +314,7 @@ class OptoMemristor:
             )             
                 
         """
+        self._check_dc()
         MAX_LIST_SWEEP_POINTS = 69901
 
         if cycles < 1:
@@ -312,27 +340,22 @@ class OptoMemristor:
 
         all_dataframes = []
         
-        
-        time.sleep(0.1)
+        trigger_time = datetime.utcnow().isoformat()
+        self.k.clear_error_queue()
+        self.k.set_compliance(compliance, Quantity.I, smu)
+        self.k.set_nplc(nplc, smu)
+        self.k.set_autozero(autozero, smu)
+        self.k.set_range(source_range, Mode.SOURCE, Quantity.V, smu)
+        self.k.set_range(measure_range, Mode.MEASURE, Quantity.I, smu)
         for c in range(1, cycles+1):
              print(f"--- Starting cycle {c} of {cycles} ---")
+             
              for led_i in led_current_list:
                 print(f"Testing LED current: {led_i} A")
                 # 1. Update point calculation to include the 2 READ pulses
                 self.dc.configure_ttl(led_i)
                 self.dc.switch_on()
                 total_points = num_points
-                
-                # Configure DC2200 for this current
-                
-
-                # Keithley setup (repeated for each LED current to ensure clean state)
-                self.k.clear_error_queue()
-                self.k.set_compliance(compliance, Quantity.I, smu)
-                self.k.set_nplc(nplc, smu)
-                self.k.set_autozero(autozero, smu)
-                self.k.set_range(source_range, Mode.SOURCE, Quantity.V, smu)
-                self.k.set_range(measure_range, Mode.MEASURE, Quantity.I, smu)
 
                 # Load script and send lists
                 self.k.send("loadandrunscript")
@@ -341,7 +364,7 @@ class OptoMemristor:
                     f"local v_list = {self.k.serialize_sequence(v_list)}"):
                     self.k.send(cmd)
 
-                trigger_time = datetime.utcnow().isoformat()
+                
 
                 # Call the Lua function (OESweep toggles digio bit)
                 self.k.send(
@@ -393,7 +416,7 @@ class OptoMemristor:
                         'measure_range': actual_measure_range,
                         'configured_source_range': source_range,
                         'configured_measure_range': measure_range,
-                        "led_brightness_levels": list(led_brightness_level),
+                        "led_brightness_levels": list(led_current_list),
                         "smu": smu.value
                         }
                     }
@@ -405,8 +428,191 @@ class OptoMemristor:
             file.write(dataset)
         return dataset
     
-    
-    def bipolar_set_compliance_sweep_dual_buffer(
+    # ----------------------------------------------------------------------
+    # Memristor methods (no DC required)
+    # ---------------------------------------------------------------------- 
+    def formingsweep(
+        self,
+        v_set: float,
+        v_reset: float,
+        step_size: float,
+        set_compliance: float,
+        reset_compliance: float,
+        measure_range: typing.Union[float, Range] = 3e-3,
+        source_range: typing.Optional[typing.Union[float, Range]] = None,
+        settling_time: float=0.002,
+        nplc: float = 0.1,
+        smu: SMU = SMU.SMUA,
+        autozero: Autozero = Autozero.OFF,
+        measurement_title: str = "Forming Sweep",
+        save: bool = False,
+        file: str = "forming_data.txt",
+        display: bool = False,
+        
+        **kwargs
+    ) -> Dataset:
+        """_summary_
+
+        Args:
+            v_set (float): _description_
+            v_reset (float): _description_
+            step_size (float): _description_
+            set_compliance (float): _description_
+            reset_compliance (float): _description_
+            measure_range (typing.Union[float, Range], optional): _description_. Defaults to 3e-3.
+            source_range (typing.Optional[typing.Union[float, Range]], optional): _description_. Defaults to None.
+            settling_time (float, optional): _description_. Defaults to 0.002.
+            nplc (float, optional): _description_. Defaults to 0.1.
+            smu (SMU, optional): _description_. Defaults to SMU.SMUA.
+            autozero (Autozero, optional): _description_. Defaults to Autozero.OFF.
+            measurement_title (str, optional): _description_. Defaults to "Forming Sweep".
+            save (bool, optional): _description_. Defaults to False.
+            file (str, optional): _description_. Defaults to "forming_data.txt".
+            display (bool, optional): _description_. Defaults to False.
+
+        Returns:
+            Dataset: _description_
+            example usage:
+            dataset = characterization.formingsweep(
+                v_set=1.0,
+                v_reset=-1.0,
+                step_size=0.1,
+                set_compliance=0.1,
+                reset_compliance=0.1
+            )
+        """
+        MAX_LIST_SWEEP_POINTS = 69901
+        # 1. Create safe triangular sweeps (returning to 0V)
+        set_list = create_sweep_list([v_set], step_size)
+        reset_list = create_sweep_list([v_reset], step_size)
+
+        # 2. Determine file saving
+        file_obj = TextFile(file) if save else None
+        
+        set_points = len(set_list)
+        reset_points = len(reset_list)
+        combined = list(set_list) + list(reset_list)
+        max_sweep = max(abs(min(combined)), max(combined))
+        if source_range is None:
+            source_range = max_sweep
+        total_points = set_points + 1 + reset_points + 1 # +1 for the read after set and +1 for the read after reset
+        
+        if total_points > MAX_LIST_SWEEP_POINTS:
+            raise errors.InvalidCommandParameterException(f'Max number of points ({MAX_LIST_SWEEP_POINTS}) exceeded: {total_points}')
+        # Keithley setup (repeated for each LED current to ensure clean state)
+        self.k.clear_error_queue()
+        self.k.set_nplc(nplc, smu)
+        self.k.set_autozero(autozero, smu)
+        self.k.set_range(source_range, Mode.SOURCE, Quantity.V, smu)
+        self.k.set_range(measure_range, Mode.MEASURE, Quantity.I, smu)
+
+        # Load script and send lists
+        self.k.send("loadandrunscript")
+
+        for cmd in self.k._split_table_definition_command(
+            f"local set_list = {self.k.serialize_sequence(set_list)}"
+        ):
+            self.k.send(cmd)
+        for cmd in self.k._split_table_definition_command(
+            f"local reset_list = {self.k.serialize_sequence(reset_list)}"
+        ):
+            self.k.send(cmd)
+        self.k.send(
+            f"FormingSweep({smu.value}, set_list, reset_list, "
+            f"{settling_time}, {set_compliance}, {reset_compliance},"
+            f"{set_points}, {reset_points})"
+        )
+        self.k.send('set_list = nil')
+        self.k.send('reset_list = nil')
+        self.k.send("endscript")
+        trigger_time = datetime.utcnow().isoformat()
+        # Wait for measurement to complete (estimate)
+        time.sleep(total_points * (settling_time + nplc * 0.02))
+
+        self.k.check_error_queue(force=True)
+       
+        actual_source_range = float(self.k.query(f'{smu.value}.source.rangev'))
+        actual_measure_range = float(self.k.query(f'{smu.value}.measure.rangei'))
+        r1, t1, v1 = self.get_buffer_data(1, total_points, smu)
+
+        self.k.clear_buffer(1, smu)
+        self.k.check_error_queue(force=True)
+
+        # 2. Build the correct phase pattern for the DataFrame
+        phase_pattern = (
+            ["SET"] * set_points + 
+            ["READ_SET"] + 
+            ["RESET"] * reset_points + 
+            ["READ_RESET"]
+        )
+
+        df = pd.DataFrame({
+            "t": t1,
+            "v": v1,
+            "i": r1
+        })
+        
+        # 3. Apply the pattern and cycle numbers correctly
+        df["phase"] = phase_pattern 
+        column_descriptions = {
+            't': {
+                'name': 'Time',
+                'channel': smu.value,
+                'unit': 'seconds, s'
+            },
+            'v': {
+                'name': 'Voltage',
+                'channel': smu.value,
+                'unit': 'Volt, V'
+            },
+            'i': {
+                'name': 'Current',
+                'channel': smu.value,
+                'unit': 'Ampere, A'
+            },
+            'phase': {
+                'name': 'Phase',
+                'description': 'SET sweep, the read after SET, the RESET sweep, or the read after RESET'
+            },
+            
+        }
+
+        metadata = {
+            "utc_datetime": trigger_time,   # time of last measurement
+            "instrument_idn": self.k.id_str,
+            "measurement_settings": {
+                "type": "formingsweep",
+                "set_list": [float(elem) for elem in set_list],
+                "reset_list": [float(elem) for elem in reset_list],
+                "compliance": set_compliance,
+                "nplc": nplc,
+                "settling_time": settling_time,
+                'source_range': actual_source_range,
+                'measure_range': actual_measure_range,
+                'configured_source_range': source_range,
+                'configured_measure_range': measure_range,
+                "smu": smu.value
+            },"column_descriptions": column_descriptions
+        }
+
+        dataset = Dataset(title=measurement_title, metadata=metadata, data=df)
+        if file:
+            file.write(dataset)
+             
+        if display:
+            df = dataset.data
+            plot(
+                x_values=df['v'],
+                y_values=df['i'],
+                title=measurement_title,
+                x_label="Voltage (V)",
+                y_label="Current (A)",
+                y_scale="log" if (df['i'] > 0).all() else "linear",
+                display=True
+            )
+        return dataset
+  
+    def bipolar_sweep(
         self,
         set_list: typing.Sequence[float],
         reset_list: typing.Sequence[float],
@@ -451,7 +657,7 @@ class OptoMemristor:
             
                 example usage:
                 
-                dataset = opto_memristor.bipolar_set_compliance_sweep_dual_buffer(
+                dataset = characterization.bipolar_sweep(
                     set_list=create_sweep_list(0, 2, 0.1),  # SET sweep from 0V to 2V in 0.1V steps
                     reset_list=create_sweep_list(0, -2, -0.1),  # RESET sweep from 0V to -2V in -0.1V steps
                     set_compliance_list=[0.01, 0.05, 0.1],  # Test SET compliance levels of 10mA, 50mA, and 100mA
@@ -550,31 +756,9 @@ class OptoMemristor:
             time.sleep(total_pts * (settling_time + nplc * 0.02))
 
             self.k.check_error_queue()
-            # # --- Retrieve data from both buffers ---
-            # n1 = int(float(self.k.send_recv(f"print({smu.value}.nvbuffer1.n)")))
-            # n2 = int(float(self.k.send_recv(f"print({smu.value}.nvbuffer2.n)")))
-
-            # if n1 == 0 and n2 == 0:
-            #     raise RuntimeError("No data collected")
-
-            # if n1 != total_pts_buffer1:
-            #     warnings.warn(f"Buffer1: expected {total_pts_buffer1} points, got {n1}")
-            # if n2 != total_pts_buffer2:
-            #     warnings.warn(f"Buffer2: expected {total_pts_buffer2} points, got {n2}")
-
-
-            # Helper to fetch buffer data
-            
-            
-            def get_buffer_data(buf_num, count):
-                readings   = [float(v) for v in self.k.send_recv(f"printbuffer(1, {count}, {smu.value}.nvbuffer{buf_num}.readings)").split(", ")]
-                timestamps = [float(v) for v in self.k.send_recv(f"printbuffer(1, {count}, {smu.value}.nvbuffer{buf_num}.timestamps)").split(", ")]
-                sourcevals = [float(v) for v in self.k.send_recv(f"printbuffer(1, {count}, {smu.value}.nvbuffer{buf_num}.sourcevalues)").split(", ")]
-                return readings, timestamps, sourcevals
-            
 
             # Buffer 1: SET + READ_SET
-            r1, t1, v1 = get_buffer_data(1, total_pts_buffer1)
+            r1, t1, v1 = self.get_buffer_data(1, total_pts_buffer1, smu)
             df1 = pd.DataFrame({
                 "t": t1,
                 "v": v1,
@@ -588,7 +772,7 @@ class OptoMemristor:
             df1["cycle"] = np.repeat(np.arange(1, cycles + 1), set_pts + 1)[:total_pts_buffer1]
 
             # Buffer 2: RESET + READ_RESET
-            r2, t2, v2 = get_buffer_data(2, total_pts_buffer2)
+            r2, t2, v2 = self.get_buffer_data(2, total_pts_buffer2, smu)
             df2 = pd.DataFrame({
                 "t": t2,
                 "v": v2,
@@ -648,3 +832,8 @@ class OptoMemristor:
         if file:
             file.write(dataset)
         return dataset
+    
+    
+    
+
+    
