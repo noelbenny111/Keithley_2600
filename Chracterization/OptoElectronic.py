@@ -218,17 +218,24 @@ class Characterization:
                         "cycle": c,
                         "led_brightness": led_i
                     })
+                
                 all_dataframes.append(df)
 
         # Combine all data
         master_df = pd.concat(all_dataframes, ignore_index=True)
-        
+        column_descriptions = {
+            "t": "Timestamp of each measurement point (s)",
+            "v": "Voltage applied by SMU (V)",
+            "i": "Current measured by SMU (A)",
+            "cycle": "Cycle number of the measurement (1 to cycles)",
+            "led_brightness": "LED brightness level (A) set on DC2200"
+        }
         metadata = {
                     "utc_datetime": trigger_time,   # time of last measurement
                     "instrument_idn": self.k.id_str,
                     "measurement_settings": {
                         "type": "photodiode_IV_vs_light_cycled",
-                        "v_list": list(v_list),
+                        "v_list": [float(v) for v in v_list],
                         "cycles": cycles,
                         "compliance": compliance,
                         "nplc": nplc,
@@ -237,9 +244,9 @@ class Characterization:
                         'measure_range': actual_measure_range,
                         'configured_source_range': source_range,
                         'configured_measure_range': measure_range,
-                        "led_brightness_level": list(led_brightness_level),
+                        "led_brightness_level": [float(v) for v in led_brightness_level],
                         "smu": smu.value
-                        }
+                        },'column_descriptions': column_descriptions
                     }
         if custom_metadata:
             metadata["custom_metadata"] = custom_metadata
@@ -401,13 +408,19 @@ class Characterization:
 
         # Combine all data
         master_df = pd.concat(all_dataframes, ignore_index=True)
-        
+        column_descriptions = {
+            "t": "Timestamp of each measurement point (s)",
+            "v": "Voltage applied by SMU (V)",
+            "i": "Current measured by SMU (A)",
+            "cycle": "Cycle number of the measurement (1 to cycles)",
+            "led_brightness": "LED brightness level (A) set on DC2200"
+        }
         metadata = {
                     "utc_datetime": trigger_time,   # time of last measurement
                     "instrument_idn": self.k.id_str,
                     "measurement_settings": {
                         "type": "photodiode_IV_vs_light_cycled",
-                        "v_list": list(v_list),
+                        "v_list": [float(v) for v in v_list],
                         "cycles": cycles,
                         "compliance": compliance,
                         "nplc": nplc,
@@ -416,7 +429,7 @@ class Characterization:
                         'measure_range': actual_measure_range,
                         'configured_source_range': source_range,
                         'configured_measure_range': measure_range,
-                        "led_brightness_levels": list(led_current_list),
+                        "led_brightness_levels": [float(v) for v in led_current_list],
                         "smu": smu.value
                         }
                     }
@@ -492,7 +505,7 @@ class Characterization:
         set_points = len(set_list)
         reset_points = len(reset_list)
         combined = list(set_list) + list(reset_list)
-        max_sweep = max(abs(min(combined)), max(combined))
+        max_sweep = max(abs(v) for v in combined)
         if source_range is None:
             source_range = max_sweep
         total_points = set_points + 1 + reset_points + 1 # +1 for the read after set and +1 for the read after reset
@@ -796,11 +809,17 @@ class Characterization:
 
         # --- Combine all set compliance data ---
         master_df = pd.concat(all_dfs, ignore_index=True)
-
+        column_descriptions = {
+            "t": "Timestamp of each measurement point (s)",
+            "v": "Voltage applied by SMU (V)",
+            "i": "Current measured by SMU (A)",
+            "phase": "Phase of the sweep (SET, READ_SET, RESET, READ_RESET)",
+            "cycle": "Cycle number of the measurement (1 to cycles)",
+            "set_compliance": "Current compliance level for the SET phase (A)"
+        }
         # Sort by set_compliance, cycle, and timestamp (optional)
         master_df.sort_values(["set_compliance", "cycle", "t"], inplace=True)
         master_df.reset_index(drop=True, inplace=True)
-
         # Metadata
         actual_source_range = float(self.k.query(f'{smu.value}.source.rangev'))
         actual_measure_range = float(self.k.query(f'{smu.value}.measure.rangei'))
@@ -823,7 +842,7 @@ class Characterization:
                 "configured_source_range": source_range,
                 "configured_measure_range": measure_range,
                 "smu": smu.value
-            }
+            },'column_descriptions': column_descriptions
         }
         if custom_metadata:
             metadata["custom_metadata"] = custom_metadata
